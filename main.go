@@ -1,9 +1,9 @@
 package main
 
 import (
+	"github.com/asafcyi/Stechhelm/commands"
 	"github.com/jfrog/jfrog-cli-core/v2/plugins"
 	"github.com/jfrog/jfrog-cli-core/v2/plugins/components"
-	"github.com/jfrog/jfrog-cli-plugin-template/commands"
 )
 
 func main() {
@@ -21,5 +21,6 @@ func getApp() components.App {
 
 func getCommands() []components.Command {
 	return []components.Command{
-		commands.GetHelloCommand()}
+		commands.GetAuditCommand(),
+	}
 }

@@ -1,7 +1,7 @@
-# hello-frog
+# stechhelm
 
 ## About this plugin
-This plugin is a template and a functioning example for a basic JFrog CLI plugin. 
+This plugin is a template and a functioning example for a basic JFrog CLI plugin.
 This README shows the expected structure of your plugin's README.
 
 ## Installation with JFrog CLI
