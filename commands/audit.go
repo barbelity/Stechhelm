@@ -3,13 +3,16 @@ package commands
 import (
 	"errors"
 	"fmt"
+	"github.com/jedib0t/go-pretty/v6/text"
 	"github.com/jfrog/jfrog-cli-core/v2/artifactory/utils"
 	"github.com/jfrog/jfrog-cli-core/v2/common/commands"
 	"github.com/jfrog/jfrog-cli-core/v2/plugins/components"
 	"github.com/jfrog/jfrog-cli-core/v2/utils/config"
 	"github.com/jfrog/jfrog-client-go/artifactory/services"
 	clientutils "github.com/jfrog/jfrog-client-go/utils"
-	"github.com/jfrog/jfrog-client-go/utils/log"
+	//"github.com/jfrog/jfrog-client-go/utils/log"
+	"github.com/jedib0t/go-pretty/v6/table"
+	"os"
 )
 
 func GetAuditCommand() components.Command {
@@ -56,15 +59,56 @@ func doAudit(artifactoryDetails *config.ServerDetails) error {
 	var repositoryConfigs []AuditRepositoryDetails
 	for _, repositoryDetail := range *repositoryDetails {
 		repositoryConfig := AuditRepositoryDetails{}
-		err := repositoriesService.Get(repositoryDetail.Key, &repositoryConfig)
+		err := repositoriesService.Get(repositoryDetail.Key, &repositoryConfig) // TODO: Bar - Exclude/Include patterns are always empty, even if there are some
 		if err != nil {
 			return err
 		}
 		repositoryConfigs = append(repositoryConfigs, repositoryConfig)
 	}
 
-	log.Info(fmt.Sprintf("Configurations: %#v", repositoryConfigs))
+	//log.Info(fmt.Sprintf("Configurations: %#v", repositoryConfigs))
+	printAsTable(repositoryConfigs)
 	return nil
+}
+
+func printAsTable(repositoryConfigs []AuditRepositoryDetails) {
+	t := table.NewWriter()
+	t.SetOutputMirror(os.Stdout)
+	t.AppendHeader(table.Row{"#", "Name", "Type", "Package type", "Include patterns", "Exclude patterns",
+		"Priority Resolution", "Xray Index", "Risk?"})
+	t.SetColumnConfigs([]table.ColumnConfig{
+		{Number: 5, Align: text.AlignCenter},
+		{Number: 6, Align: text.AlignCenter},
+		{Number: 7, Align: text.AlignCenter},
+		{Number: 8, Align: text.AlignCenter},
+		{Number: 9, Align: text.AlignCenter},
+	})
+	riskCount := 0
+	for i, repositoryConfig := range repositoryConfigs {
+		risk := false
+		// Checking if Exclude & Include patterns are empty OR repo is local without priority resolution OR repo is not indexing by xray
+		if ((repositoryConfig.ExcludePattern == "") && (repositoryConfig.IncludePattern == "")) || ((repositoryConfig.PriorityResolution == false) && (repositoryConfig.Rclass == "local")) || (repositoryConfig.XrayIndex == false) {
+			risk = true
+			riskCount += 1
+		}
+
+		// Set output params
+		incPatterns := "X"
+		if repositoryConfig.IncludePattern != "" {
+			incPatterns = "V"
+		}
+		excPatterns := "X"
+		if repositoryConfig.IncludePattern != "" {
+			excPatterns = "V"
+		}
+
+		t.AppendRow(table.Row{i, repositoryConfig.Key, repositoryConfig.Rclass, repositoryConfig.PackageType,
+			incPatterns, excPatterns, repositoryConfig.PriorityResolution, repositoryConfig.XrayIndex,
+			risk})
+		t.AppendSeparator()
+	}
+	t.AppendFooter(table.Row{"", "", "", "", "", "", "", "Total in risk", riskCount})
+	t.Render()
 }
 
 type AuditRepositoryDetails struct {
