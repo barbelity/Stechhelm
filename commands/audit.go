@@ -3,15 +3,12 @@ package commands
 import (
 	"errors"
 	"fmt"
+	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/jedib0t/go-pretty/v6/text"
 	"github.com/jfrog/jfrog-cli-core/v2/artifactory/utils"
-	"github.com/jfrog/jfrog-cli-core/v2/common/commands"
 	"github.com/jfrog/jfrog-cli-core/v2/plugins/components"
 	"github.com/jfrog/jfrog-cli-core/v2/utils/config"
 	"github.com/jfrog/jfrog-client-go/artifactory/services"
-	clientutils "github.com/jfrog/jfrog-client-go/utils"
-	//"github.com/jfrog/jfrog-client-go/utils/log"
-	"github.com/jedib0t/go-pretty/v6/table"
 	"os"
 )
 
@@ -59,14 +56,13 @@ func doAudit(artifactoryDetails *config.ServerDetails) error {
 	var repositoryConfigs []AuditRepositoryDetails
 	for _, repositoryDetail := range *repositoryDetails {
 		repositoryConfig := AuditRepositoryDetails{}
-		err := repositoriesService.Get(repositoryDetail.Key, &repositoryConfig) // TODO: Bar - Exclude/Include patterns are always empty, even if there are some
+		err := repositoriesService.Get(repositoryDetail.Key, &repositoryConfig)
 		if err != nil {
 			return err
 		}
 		repositoryConfigs = append(repositoryConfigs, repositoryConfig)
 	}
 
-	//log.Info(fmt.Sprintf("Configurations: %#v", repositoryConfigs))
 	printAsTable(repositoryConfigs)
 	return nil
 }
@@ -87,18 +83,19 @@ func printAsTable(repositoryConfigs []AuditRepositoryDetails) {
 	for i, repositoryConfig := range repositoryConfigs {
 		risk := false
 		// Checking if Exclude & Include patterns are empty OR repo is local without priority resolution OR repo is not indexing by xray
-		if ((repositoryConfig.ExcludePattern == "") && (repositoryConfig.IncludePattern == "")) || ((repositoryConfig.PriorityResolution == false) && (repositoryConfig.Rclass == "local")) || (repositoryConfig.XrayIndex == false) {
+		if ((repositoryConfig.ExcludesPattern == "") && (repositoryConfig.IncludesPattern == "**/*")) ||
+			((repositoryConfig.PriorityResolution == false) && (repositoryConfig.Rclass == "local")) || (repositoryConfig.XrayIndex == false) {
 			risk = true
 			riskCount += 1
 		}
 
 		// Set output params
 		incPatterns := "X"
-		if repositoryConfig.IncludePattern != "" {
+		if repositoryConfig.IncludesPattern != "**/*" {
 			incPatterns = "V"
 		}
 		excPatterns := "X"
-		if repositoryConfig.IncludePattern != "" {
+		if repositoryConfig.ExcludesPattern != "" {
 			excPatterns = "V"
 		}
 
@@ -112,13 +109,13 @@ func printAsTable(repositoryConfigs []AuditRepositoryDetails) {
 }
 
 type AuditRepositoryDetails struct {
-	Key                string
-	Rclass             string
-	PackageType        string
-	IncludePattern     string
-	ExcludePattern     string
-	XrayIndex          bool
-	PriorityResolution bool
+	Key                string `json:"key"`
+	Rclass             string `json:"rclass"`
+	PackageType        string `json:"packageType"`
+	IncludesPattern    string `json:"includesPattern"`
+	ExcludesPattern    string `json:"excludesPattern"`
+	XrayIndex          bool   `json:"xrayIndex"`
+	PriorityResolution bool   `json:"priorityResolution"`
 }
 
 func getAuditArguments() []components.Argument {
@@ -132,22 +129,4 @@ func getAuditFlags() []components.Flag {
 			Description: "Artifactory server ID configured using the config command.",
 		},
 	}
-}
-
-// Returns the Artifactory Details of the provided server-id, or the default one.
-func getRtDetails(c *components.Context) (*config.ServerDetails, error) {
-	serverId := c.GetStringFlagValue("server-id")
-	details, err := commands.GetConfig(serverId, false)
-	if err != nil {
-		return nil, err
-	}
-	if details.Url == "" {
-		return nil, errors.New("no server-id was found, or the server-id has no url")
-	}
-	details.Url = clientutils.AddTrailingSlashIfNeeded(details.Url)
-	err = config.CreateInitialRefreshableTokensIfNeeded(details)
-	if err != nil {
-		return nil, err
-	}
-	return details, nil
 }
