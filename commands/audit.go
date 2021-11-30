@@ -8,7 +8,6 @@ import (
 	"github.com/jfrog/jfrog-cli-core/v2/artifactory/utils"
 	"github.com/jfrog/jfrog-cli-core/v2/plugins/components"
 	"github.com/jfrog/jfrog-cli-core/v2/utils/config"
-	"github.com/jfrog/jfrog-client-go/artifactory/services"
 	"os"
 )
 
@@ -44,19 +43,16 @@ func doAudit(artifactoryDetails *config.ServerDetails) error {
 	}
 
 	// Get all repositories.
-	jfrogClient := serviceManager.Client()
-	repositoriesService := services.NewRepositoriesService(jfrogClient)
-	repositoriesService.ArtDetails = serviceManager.GetConfig().GetServiceDetails()
-	repositoryDetails, err := repositoriesService.GetAll()
+	repositoryDetails, err := serviceManager.GetAllRepositories()
 	if err != nil {
 		return err
 	}
 
 	// Get all repository configurations.
-	var repositoryConfigs []AuditRepositoryDetails
+	var repositoryConfigs []CommonRepositoryDetails
 	for _, repositoryDetail := range *repositoryDetails {
-		repositoryConfig := AuditRepositoryDetails{}
-		err := repositoriesService.Get(repositoryDetail.Key, &repositoryConfig)
+		repositoryConfig := CommonRepositoryDetails{}
+		err := serviceManager.GetRepository(repositoryDetail.Key, &repositoryConfig)
 		if err != nil {
 			return err
 		}
@@ -67,7 +63,7 @@ func doAudit(artifactoryDetails *config.ServerDetails) error {
 	return nil
 }
 
-func printAsTable(repositoryConfigs []AuditRepositoryDetails) {
+func printAsTable(repositoryConfigs []CommonRepositoryDetails) {
 	t := table.NewWriter()
 	t.SetOutputMirror(os.Stdout)
 	t.AppendHeader(table.Row{"#", "Name", "Type", "Package type", "Include patterns", "Exclude patterns",
@@ -106,16 +102,6 @@ func printAsTable(repositoryConfigs []AuditRepositoryDetails) {
 	}
 	t.AppendFooter(table.Row{"", "", "", "", "", "", "", "Total in risk", riskCount})
 	t.Render()
-}
-
-type AuditRepositoryDetails struct {
-	Key                string `json:"key"`
-	Rclass             string `json:"rclass"`
-	PackageType        string `json:"packageType"`
-	IncludesPattern    string `json:"includesPattern"`
-	ExcludesPattern    string `json:"excludesPattern"`
-	XrayIndex          bool   `json:"xrayIndex"`
-	PriorityResolution bool   `json:"priorityResolution"`
 }
 
 func getAuditArguments() []components.Argument {
