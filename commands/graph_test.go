@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestSimpleAudit(t *testing.T) {
+func TestSimpleGraph(t *testing.T) {
 	assert.True(t, true)
 }
 
