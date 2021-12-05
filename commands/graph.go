@@ -14,9 +14,11 @@ import (
 	"github.com/jfrog/jfrog-client-go/utils/errorutils"
 	"github.com/jfrog/jfrog-client-go/utils/io/httputils"
 	"github.com/jfrog/jfrog-client-go/utils/log"
+	"github.com/neo4j/neo4j-go-driver/v4/neo4j"
 	"io"
 	"io/ioutil"
 	"net/http"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -27,8 +29,8 @@ func GetGraphCommand() components.Command {
 		Name:        "graph",
 		Description: "Create a graph.",
 		Aliases:     []string{"g"},
-		Arguments:   getAuditArguments(),
-		Flags:       getAuditFlags(),
+		Arguments:   getGraphArguments(),
+		Flags:       getGraphFlags(),
 		Action: func(c *components.Context) error {
 			return graphCmd(c)
 		},
@@ -43,14 +45,17 @@ func graphCmd(c *components.Context) error {
 	if err != nil {
 		return err
 	}
-
+	config, err := getGraphBuilderConfig(c)
+	if err != nil {
+		return err
+	}
 	graphBuilder := &GraphBuilder{
+		builderConfig:        config,
 		rtDetails:            rtDetails,
+		graphBuilderCommands: []string{},
 		cypherCommands:       make(map[string]bool),
-		graphBuilderCommands: &strings.Builder{},
 		repoToVirtualMapping: make(map[string]map[string]bool),
 	}
-	// Initialize graphBuilder fields.
 	graphBuilder.serviceManager, err = utils.CreateServiceManager(graphBuilder.rtDetails, -1, false)
 	if err != nil {
 		return err
@@ -58,32 +63,109 @@ func graphCmd(c *components.Context) error {
 	serviceDetails := graphBuilder.serviceManager.GetConfig().GetServiceDetails()
 	graphBuilder.clientDetails = serviceDetails.CreateHttpClientDetails()
 	graphBuilder.baseUrl = serviceDetails.GetUrl()
-
 	return graphBuilder.makeGraph()
 }
 
 type GraphBuilder struct {
-	rtDetails            *config.ServerDetails
-	cypherCommands       map[string]bool
-	graphBuilderCommands *strings.Builder
-	repoToVirtualMapping map[string]map[string]bool
-	serviceManager       artifactory.ArtifactoryServicesManager
-	clientDetails        httputils.HttpClientDetails
 	baseUrl              string
+	graphBuilderCommands []string
+	cypherCommands       map[string]bool
+	builderConfig        *graphBuilderConfig
+	rtDetails            *config.ServerDetails
+	repoToVirtualMapping map[string]map[string]bool
+	clientDetails        httputils.HttpClientDetails
+	serviceManager       artifactory.ArtifactoryServicesManager
 }
 
-func (gb GraphBuilder) makeGraph() error {
+func getGraphBuilderConfig(c *components.Context) (*graphBuilderConfig, error) {
+	graphUrl := c.GetStringFlagValue("graph-url")
+	graphUser := c.GetStringFlagValue("graph-user")
+	graphPassword := c.GetStringFlagValue("graph-password")
+	graphDatabase := c.GetStringFlagValue("graph-database")
+	if graphUrl != "" || graphUser != "" || graphPassword != "" || graphDatabase != "" {
+		if graphUrl == "" || graphUser == "" || graphPassword == "" || graphDatabase == "" {
+			return nil, errors.New("partial neo4j connection details provided, you must provide url, username, password and database name for neo4j")
+		}
+	}
+	graphRealm := c.GetStringFlagValue("graph-realm")
+	verbose := c.GetBoolFlagValue("verbose")
+	outToFile := c.GetBoolFlagValue("output-to-file")
+	outFilePath := c.GetStringFlagValue("output-file-path")
+	return &graphBuilderConfig{
+		verbose:       verbose,
+		graphUrl:      graphUrl,
+		outToFile:     outToFile,
+		graphUser:     graphUser,
+		graphRealm:    graphRealm,
+		outFilePath:   outFilePath,
+		graphDatabase: graphDatabase,
+		graphPassword: graphPassword,
+	}, nil
+}
 
+type graphBuilderConfig struct {
+	verbose       bool
+	outToFile     bool
+	graphUrl      string
+	graphUser     string
+	graphPassword string
+	graphRealm    string
+	outFilePath   string
+	graphDatabase string
+}
+
+func (gb *GraphBuilder) makeGraph() error {
 	startTime := time.Now()
-	// TODO: Create a file for the command output.
 
 	// Create repositories relations.
-	err := gb.CreateRepositoriesGraphRelations()
+	err := gb.createRepositoriesGraphRelations()
 	if err != nil {
 		return err
 	}
 
-	// Handle builds.
+	// Create build relations.
+	err = gb.createBuildsGraphRelations()
+	if err != nil {
+		return err
+	}
+
+	// Populate graph.
+	err = gb.populateGraphDb()
+	if err != nil {
+		log.Error("Failed connecting to graphDB: " + err.Error())
+	}
+
+	// Output results.
+	err = gb.outputResults()
+	if err != nil {
+		return err
+	}
+
+	endTime := time.Now()
+	log.Info(fmt.Sprintf("Graph creation took: %f seconds", endTime.Sub(startTime).Seconds()))
+
+	return nil
+}
+
+func (gb *GraphBuilder) outputResults() error {
+	if gb.builderConfig.outToFile {
+		fileName := gb.builderConfig.outFilePath
+		if fileName == "" {
+			timestamp := strconv.FormatInt(time.Now().Unix(), 10)
+			fileName = "stechhelm-output-" + timestamp
+		}
+		err := ioutil.WriteFile(fileName, []byte(strings.Join(gb.graphBuilderCommands, "\n")), 0644)
+		if err != nil {
+			return errors.New("Failed creating file for output: " + err.Error())
+		}
+	}
+	if gb.builderConfig.verbose {
+		log.Info(fmt.Sprintf("Graph commands:\n%v", strings.Join(gb.graphBuilderCommands, "\n")))
+	}
+	return nil
+}
+
+func (gb *GraphBuilder) createBuildsGraphRelations() error {
 	builds, err := gb.getAllBuilds()
 	if err != nil {
 		return err
@@ -95,26 +177,10 @@ func (gb GraphBuilder) makeGraph() error {
 	if err != nil {
 		return err
 	}
-
-	// TODO: Execute graph driver
-
-	// Create temp file
-	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
-	fileName := "stechhelm-output-" + timestamp + ".txt"
-	err = ioutil.WriteFile(fileName, []byte(gb.graphBuilderCommands.String()), 0644)
-	if err != nil {
-		log.Error("Failed creating file for output.")
-	}
-
-	log.Info(fmt.Sprintf("Graph commands:\n%v", gb.graphBuilderCommands.String()))
-
-	endTime := time.Now()
-	log.Info(fmt.Sprintf("Graph creation took: %f seconds", endTime.Sub(startTime).Seconds()))
-
 	return nil
 }
 
-func (gb GraphBuilder) handleBuilds(builds []Build) error {
+func (gb *GraphBuilder) handleBuilds(builds []Build) error {
 	visitedChecksums := map[string]bool{}
 	for _, build := range builds {
 		buildName := strings.TrimPrefix(build.Uri, "/")
@@ -166,7 +232,7 @@ func (gb GraphBuilder) handleBuilds(builds []Build) error {
 	return nil
 }
 
-func (gb GraphBuilder) handleArtifact(artifact *buildinfo.Artifact, buildInfo *buildinfo.BuildInfo,
+func (gb *GraphBuilder) handleArtifact(artifact *buildinfo.Artifact, buildInfo *buildinfo.BuildInfo,
 	visitedChecksums map[string]bool) error {
 	gb.graphCreateRelationshipBuildToArtifact(buildInfo.Name, buildInfo.Number, artifact.Sha1)
 	if _, ok := visitedChecksums[artifact.Sha1]; ok {
@@ -185,7 +251,7 @@ func (gb GraphBuilder) handleArtifact(artifact *buildinfo.Artifact, buildInfo *b
 	return nil
 }
 
-func (gb GraphBuilder) handleDependency(dependency *buildinfo.Dependency, buildInfo *buildinfo.BuildInfo,
+func (gb *GraphBuilder) handleDependency(dependency *buildinfo.Dependency, buildInfo *buildinfo.BuildInfo,
 	visitedChecksums map[string]bool) error {
 	gb.graphCreateRelationshipDependencyToBuild(buildInfo.Name, buildInfo.Number, dependency.Sha1)
 	if _, ok := visitedChecksums[dependency.Sha1]; ok {
@@ -204,7 +270,7 @@ func (gb GraphBuilder) handleDependency(dependency *buildinfo.Dependency, buildI
 	return nil
 }
 
-func (gb GraphBuilder) getRepositoryListBySha1(sha1 string) ([]Result, error) {
+func (gb *GraphBuilder) getRepositoryListBySha1(sha1 string) ([]Result, error) {
 	var stream io.ReadCloser
 	stream, err := gb.serviceManager.Aql(createAqlQueryForChecksumRepositories(sha1))
 	if err != nil {
@@ -229,31 +295,7 @@ func (gb GraphBuilder) getRepositoryListBySha1(sha1 string) ([]Result, error) {
 	return parsedResults.Results, nil
 }
 
-func createAqlQueryForChecksumRepositories(sha1 string) string {
-	itemsPart :=
-		`items.find({` +
-			`"actual_sha1": "%s"` +
-			`}).include("repo")`
-	return fmt.Sprintf(itemsPart, sha1)
-}
-
-type Sha1AqlResults struct {
-	Results []Result `json:"results"`
-}
-
-type Result struct {
-	Repo string `json:"repo"`
-}
-
-type Builds struct {
-	Builds []Build `json:"builds"`
-}
-
-type Build struct {
-	Uri string `json:"uri"`
-}
-
-func (gb GraphBuilder) getAllBuilds() ([]Build, error) {
+func (gb *GraphBuilder) getAllBuilds() ([]Build, error) {
 	resp, respBody, _, err := gb.serviceManager.Client().SendGet(fmt.Sprintf("%s%s", gb.baseUrl, "api/build"), true, &gb.clientDetails)
 	if err != nil {
 		return nil, err
@@ -271,7 +313,7 @@ func (gb GraphBuilder) getAllBuilds() ([]Build, error) {
 	return allBuilds.Builds, nil
 }
 
-func (gb GraphBuilder) CreateRepositoriesGraphRelations() error {
+func (gb *GraphBuilder) createRepositoriesGraphRelations() error {
 	err := gb.handleLocalRepositories()
 	if err != nil {
 		return err
@@ -287,7 +329,7 @@ func (gb GraphBuilder) CreateRepositoriesGraphRelations() error {
 	return nil
 }
 
-func (gb GraphBuilder) handleVirtualRepositories() error {
+func (gb *GraphBuilder) handleVirtualRepositories() error {
 	params := services.NewRepositoriesFilterParams()
 	params.RepoType = "virtual"
 	virtualReposDetails, err := gb.serviceManager.GetAllRepositoriesFiltered(params)
@@ -321,7 +363,7 @@ func (gb GraphBuilder) handleVirtualRepositories() error {
 	return nil
 }
 
-func (gb GraphBuilder) handleLocalRepositories() error {
+func (gb *GraphBuilder) handleLocalRepositories() error {
 	params := services.NewRepositoriesFilterParams()
 	params.RepoType = "local"
 	localReposDetails, err := gb.serviceManager.GetAllRepositoriesFiltered(params)
@@ -340,7 +382,7 @@ func (gb GraphBuilder) handleLocalRepositories() error {
 	return nil
 }
 
-func (gb GraphBuilder) handleRemoteRepositories() error {
+func (gb *GraphBuilder) handleRemoteRepositories() error {
 	params := services.NewRepositoriesFilterParams()
 	params.RepoType = "remote"
 	remoteReposDetails, err := gb.serviceManager.GetAllRepositoriesFiltered(params)
@@ -359,7 +401,7 @@ func (gb GraphBuilder) handleRemoteRepositories() error {
 	return nil
 }
 
-func (gb GraphBuilder) linkBinToAllVirtualRepos(sha1, localOrRemoteRepo string) {
+func (gb *GraphBuilder) linkBinToAllVirtualRepos(sha1, localOrRemoteRepo string) {
 	virtualRepos, exists := gb.repoToVirtualMapping[localOrRemoteRepo]
 	if !exists {
 		gb.graphCreateRelationshipBinaryToRepo(sha1, localOrRemoteRepo)
@@ -370,38 +412,143 @@ func (gb GraphBuilder) linkBinToAllVirtualRepos(sha1, localOrRemoteRepo string) 
 	}
 }
 
-func (gb GraphBuilder) graphAddCommand(cmd string) {
+func (gb *GraphBuilder) populateGraphDb() error {
+	if gb.builderConfig.graphUrl == "" {
+		return nil
+	}
+	driver, err := neo4j.NewDriver(gb.builderConfig.graphUrl, neo4j.BasicAuth(gb.builderConfig.graphUser, gb.builderConfig.graphPassword, gb.builderConfig.graphRealm))
+	if err != nil {
+		return err
+	}
+	defer func() { err = closeDbConnection(driver, err) }()
+	session := driver.NewSession(neo4j.SessionConfig{AccessMode: neo4j.AccessModeRead, DatabaseName: gb.builderConfig.graphDatabase})
+	defer func() { err = closeDbConnection(session, err) }()
+	for _, command := range gb.graphBuilderCommands {
+		_, err = session.WriteTransaction(func(transaction neo4j.Transaction) (interface{}, error) {
+			_, err := transaction.Run(command, nil)
+			if err != nil {
+				log.Error(fmt.Sprintf("Failed publishing command: %s to graphDB: %s", command, err.Error()))
+			}
+			return nil, err
+		})
+	}
+	return err
+}
+
+func closeDbConnection(closer io.Closer, previousError error) error {
+	err := closer.Close()
+	if err == nil {
+		return previousError
+	}
+	if previousError == nil {
+		return err
+	}
+	return fmt.Errorf("%v closure error occurred:\n%s\ninitial error was:\n%w", reflect.TypeOf(closer), err.Error(), previousError)
+}
+
+func (gb *GraphBuilder) graphAddCommand(cmd string) {
 	if _, ok := gb.cypherCommands[cmd]; !ok {
 		gb.cypherCommands[cmd] = true
-		gb.graphBuilderCommands.WriteString(cmd + "\n")
+		gb.graphBuilderCommands = append(gb.graphBuilderCommands, cmd)
 	}
 }
 
-func (gb GraphBuilder) graphCreateRelationshipBinaryToRepo(binarySha, repoName string) {
+func (gb *GraphBuilder) graphCreateRelationshipBinaryToRepo(binarySha, repoName string) {
 	gb.graphAddCommand(fmt.Sprintf(`MATCH (bin:Binary {sha1: "%s"}), (repo {name: "%s"}) MERGE (bin)-[r:STORED_IN]-(repo) RETURN bin.name, type(r), repo.name;`,
 		binarySha, repoName))
 }
 
-func (gb GraphBuilder) graphCreateRelationshipDependencyToBuild(buildName, buildNumber, binarySha string) {
+func (gb *GraphBuilder) graphCreateRelationshipDependencyToBuild(buildName, buildNumber, binarySha string) {
 	gb.graphAddCommand(fmt.Sprintf(`MERGE (build:Build {name: "%s", number: "%s"}) return build;`, buildName, buildNumber))
 	gb.graphAddCommand(fmt.Sprintf(`MERGE (bin:Binary {sha1: "%s"}) return bin;`, binarySha))
 	gb.graphAddCommand(fmt.Sprintf(`MATCH (build:Build {name: "%s", number: "%s"}), (bin:Binary {sha1: "%s"}) MERGE (bin)-[r:DEPENDENCY_FOR]->(build) RETURN build.name, type(r), bin.name;`,
 		buildName, buildNumber, binarySha))
 }
 
-func (gb GraphBuilder) graphCreateRelationshipBuildToArtifact(buildName, buildNumber, binarySha string) {
+func (gb *GraphBuilder) graphCreateRelationshipBuildToArtifact(buildName, buildNumber, binarySha string) {
 	gb.graphAddCommand(fmt.Sprintf(`MERGE (build:Build {name: "%s", buildNumber: "%s"}) return build;`, buildName, buildNumber))
 	gb.graphAddCommand(fmt.Sprintf(`MERGE (bin:Binary {sha1: "%s"}) return bin;`, binarySha))
 	gb.graphAddCommand(fmt.Sprintf(`MATCH (bin:Binary {sha1: "%s"}), (build:Build {name: "%s", buildNumber: "%s"}) MERGE (build)-[r:PRODUCE]->(bin) RETURN bin.name, type(r), build.name;`,
 		binarySha, buildName, buildNumber))
 }
 
-func (gb GraphBuilder) graphCreateRelationshipVirtualToLocalOrRemote(name, repo string) {
+func (gb *GraphBuilder) graphCreateRelationshipVirtualToLocalOrRemote(name, repo string) {
 	gb.graphAddCommand(fmt.Sprintf(`MATCH (repoV:RepoVIRTUAL {name: "%s"}), (repo {name: "%s"}) MERGE (repoV)-[r:LINKED_TO]-(repo) RETURN repoV.name, type(r), repo.name;`,
 		name, repo))
 }
 
-func (gb GraphBuilder) graphCreateRepoNode(name, repoType string, isPriority, isInc, isExc, isXray bool) {
+func (gb *GraphBuilder) graphCreateRepoNode(name, repoType string, isPriority, isInc, isExc, isXray bool) {
 	gb.graphAddCommand(fmt.Sprintf(`MERGE (repo:Repo%s {name: "%s", type: "%s", is_priority: "%s", is_inc: "%s", is_exc: "%s", is_xray: "%s"}) return repo;`,
 		repoType, name, repoType, strconv.FormatBool(isPriority), strconv.FormatBool(isInc), strconv.FormatBool(isExc), strconv.FormatBool(isXray)))
+}
+
+func createAqlQueryForChecksumRepositories(sha1 string) string {
+	itemsPart :=
+		`items.find({` +
+			`"actual_sha1": "%s"` +
+			`}).include("repo")`
+	return fmt.Sprintf(itemsPart, sha1)
+}
+
+type Sha1AqlResults struct {
+	Results []Result `json:"results"`
+}
+
+type Result struct {
+	Repo string `json:"repo"`
+}
+
+type Builds struct {
+	Builds []Build `json:"builds"`
+}
+
+type Build struct {
+	Uri string `json:"uri"`
+}
+
+func getGraphArguments() []components.Argument {
+	return []components.Argument{}
+}
+
+func getGraphFlags() []components.Flag {
+	return []components.Flag{
+		components.StringFlag{
+			Name:        "server-id",
+			Description: "Artifactory server ID configured using the config command.",
+		},
+		components.BoolFlag{
+			Name:         "verbose",
+			Description:  "[Default: false] Set to true to output the graph-building queries to stdout.",
+			DefaultValue: false,
+		},
+		components.StringFlag{
+			Name:        "graph-url",
+			Description: "neo4j URL.",
+		},
+		components.StringFlag{
+			Name:        "graph-user",
+			Description: "neo4j username.",
+		},
+		components.StringFlag{
+			Name:        "graph-password",
+			Description: "neo4j password.",
+		},
+		components.StringFlag{
+			Name:        "graph-database",
+			Description: "neo4j database name.",
+		},
+		components.StringFlag{
+			Name:        "graph-realm",
+			Description: "neo4j realm.",
+		},
+		components.BoolFlag{
+			Name:         "output-to-file",
+			Description:  "[Default: false] Set to true to output the graph-building queries to a file.",
+			DefaultValue: false,
+		},
+		components.StringFlag{
+			Name:        "output-file-path",
+			Description: "[Default: current workdir] Path to an output file for the graph-building queries.",
+		},
+	}
 }
