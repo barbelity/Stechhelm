@@ -29,11 +29,12 @@ func getRtDetails(c *components.Context) (*config.ServerDetails, error) {
 type CommonRepositoryDetails struct {
 	Key                string `json:"key"`
 	Rclass             string `json:"rclass"`
+	XrayIndex          bool   `json:"xrayIndex"`
 	PackageType        string `json:"packageType"`
 	IncludesPattern    string `json:"includesPattern"`
 	ExcludesPattern    string `json:"excludesPattern"`
-	XrayIndex          bool   `json:"xrayIndex"`
 	PriorityResolution bool   `json:"priorityResolution"`
+	IsSafe             bool
 }
 
 type VirtualRepositoryDetails struct {

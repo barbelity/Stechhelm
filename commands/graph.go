@@ -55,6 +55,7 @@ func graphCmd(c *components.Context) error {
 		graphBuilderCommands: []string{},
 		cypherCommands:       make(map[string]bool),
 		repoToVirtualMapping: make(map[string]map[string]bool),
+		allRepos:             make(map[string]*CommonRepositoryDetails),
 	}
 	graphBuilder.serviceManager, err = utils.CreateServiceManager(graphBuilder.rtDetails, -1, false)
 	if err != nil {
@@ -75,6 +76,7 @@ type GraphBuilder struct {
 	repoToVirtualMapping map[string]map[string]bool
 	clientDetails        httputils.HttpClientDetails
 	serviceManager       artifactory.ArtifactoryServicesManager
+	allRepos             map[string]*CommonRepositoryDetails
 }
 
 func getGraphBuilderConfig(c *components.Context) (*graphBuilderConfig, error) {
@@ -342,8 +344,9 @@ func (gb *GraphBuilder) handleVirtualRepositories() error {
 		if err != nil {
 			return err
 		}
-		gb.graphCreateRepoNode(repositoryConfig.Key, "VIRTUAL", repositoryConfig.PriorityResolution,
-			repositoryConfig.IncludesPattern != "**/*", repositoryConfig.ExcludesPattern != "", repositoryConfig.XrayIndex)
+		isSafe := gb.checkVirtualRepoSafety(&repositoryConfig)
+		gb.graphCreateVirtualRepoNode(repositoryConfig.Key, "VIRTUAL", repositoryConfig.PriorityResolution,
+			repositoryConfig.IncludesPattern != "**/*", repositoryConfig.ExcludesPattern != "", repositoryConfig.XrayIndex, isSafe)
 
 		// Populate repositories to virtuals map.
 		for _, linkedRepo := range repositoryConfig.Repositories {
@@ -363,6 +366,30 @@ func (gb *GraphBuilder) handleVirtualRepositories() error {
 	return nil
 }
 
+func (gb *GraphBuilder) checkVirtualRepoSafety(repositoryConfig *VirtualRepositoryDetails) bool {
+	repoIsSafe := true
+	localWithPriorityExists := false
+	for _, repo := range repositoryConfig.Repositories {
+		if config, ok := gb.allRepos[repo]; ok {
+			if !config.XrayIndex {
+				repoIsSafe = false
+				break
+			}
+			if strings.EqualFold(config.Rclass, "local") {
+				if config.PriorityResolution {
+					localWithPriorityExists = true
+				}
+			} else if strings.EqualFold(config.Rclass, "remote") {
+				if config.IncludesPattern == "**/*" && config.ExcludesPattern == "" {
+					repoIsSafe = false
+					break
+				}
+			}
+		}
+	}
+	return repoIsSafe && localWithPriorityExists
+}
+
 func (gb *GraphBuilder) handleLocalRepositories() error {
 	params := services.NewRepositoriesFilterParams()
 	params.RepoType = "local"
@@ -378,6 +405,7 @@ func (gb *GraphBuilder) handleLocalRepositories() error {
 		}
 		gb.graphCreateRepoNode(repositoryConfig.Key, "LOCAL", repositoryConfig.PriorityResolution,
 			repositoryConfig.IncludesPattern != "**/*", repositoryConfig.ExcludesPattern != "", repositoryConfig.XrayIndex)
+		gb.allRepos[repositoryConfig.Key] = &repositoryConfig
 	}
 	return nil
 }
@@ -397,6 +425,7 @@ func (gb *GraphBuilder) handleRemoteRepositories() error {
 		}
 		gb.graphCreateRepoNode(repositoryConfig.Key, "REMOTE", repositoryConfig.PriorityResolution,
 			repositoryConfig.IncludesPattern != "**/*", repositoryConfig.ExcludesPattern != "", repositoryConfig.XrayIndex)
+		gb.allRepos[repositoryConfig.Key] = &repositoryConfig
 	}
 	return nil
 }
@@ -475,6 +504,11 @@ func (gb *GraphBuilder) graphCreateRelationshipBuildToArtifact(buildName, buildN
 func (gb *GraphBuilder) graphCreateRelationshipVirtualToLocalOrRemote(name, repo string) {
 	gb.graphAddCommand(fmt.Sprintf(`MATCH (repoV:RepoVIRTUAL {name: "%s"}), (repo {name: "%s"}) MERGE (repoV)-[r:LINKED_TO]-(repo) RETURN repoV.name, type(r), repo.name;`,
 		name, repo))
+}
+
+func (gb *GraphBuilder) graphCreateVirtualRepoNode(name, repoType string, isPriority, isInc, isExc, isXray, isSafe bool) {
+	gb.graphAddCommand(fmt.Sprintf(`MERGE (repo:Repo%s {name: "%s", type: "%s", is_priority: "%s", is_inc: "%s", is_exc: "%s", is_xray: "%s", is_safe: "%s"}) return repo;`,
+		repoType, name, repoType, strconv.FormatBool(isPriority), strconv.FormatBool(isInc), strconv.FormatBool(isExc), strconv.FormatBool(isXray), strconv.FormatBool(isSafe)))
 }
 
 func (gb *GraphBuilder) graphCreateRepoNode(name, repoType string, isPriority, isInc, isExc, isXray bool) {
