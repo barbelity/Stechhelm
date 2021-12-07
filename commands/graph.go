@@ -64,6 +64,7 @@ func graphCmd(c *components.Context) error {
 	serviceDetails := graphBuilder.serviceManager.GetConfig().GetServiceDetails()
 	graphBuilder.clientDetails = serviceDetails.CreateHttpClientDetails()
 	graphBuilder.baseUrl = serviceDetails.GetUrl()
+	graphBuilder.graphAddCommand("MERGE (x:Attacker);")
 	return graphBuilder.makeGraph()
 }
 
@@ -86,7 +87,7 @@ func getGraphBuilderConfig(c *components.Context) (*graphBuilderConfig, error) {
 	graphDatabase := c.GetStringFlagValue("graph-database")
 	if graphUrl != "" || graphUser != "" || graphPassword != "" || graphDatabase != "" {
 		if graphUrl == "" || graphUser == "" || graphPassword == "" || graphDatabase == "" {
-			return nil, errors.New("partial neo4j connection details provided, you must provide url, username, password and database name for neo4j")
+			return nil, errors.New("partial neo4j connection details provided, either provide none or the following: 'graph-url', 'graph-username', 'graph-password', 'graph-database'")
 		}
 	}
 	graphRealm := c.GetStringFlagValue("graph-realm")
@@ -124,25 +125,21 @@ func (gb *GraphBuilder) makeGraph() error {
 	if err != nil {
 		return err
 	}
-
 	// Create build relations.
 	err = gb.createBuildsGraphRelations()
 	if err != nil {
 		return err
 	}
-
 	// Populate graph.
 	err = gb.populateGraphDb()
 	if err != nil {
 		log.Error("Failed connecting to graphDB: " + err.Error())
 	}
-
 	// Output results.
 	err = gb.outputResults()
 	if err != nil {
 		return err
 	}
-
 	endTime := time.Now()
 	log.Info(fmt.Sprintf("Graph creation took: %f seconds", endTime.Sub(startTime).Seconds()))
 
@@ -452,6 +449,7 @@ func (gb *GraphBuilder) populateGraphDb() error {
 	defer func() { err = closeDbConnection(driver, err) }()
 	session := driver.NewSession(neo4j.SessionConfig{AccessMode: neo4j.AccessModeRead, DatabaseName: gb.builderConfig.graphDatabase})
 	defer func() { err = closeDbConnection(session, err) }()
+	log.Info("Populating graph data to neo4j, this may take a while...")
 	for _, command := range gb.graphBuilderCommands {
 		_, err = session.WriteTransaction(func(transaction neo4j.Transaction) (interface{}, error) {
 			_, err := transaction.Run(command, nil)
@@ -483,37 +481,40 @@ func (gb *GraphBuilder) graphAddCommand(cmd string) {
 }
 
 func (gb *GraphBuilder) graphCreateRelationshipBinaryToRepo(binarySha, repoName string) {
-	gb.graphAddCommand(fmt.Sprintf(`MATCH (bin:Binary {sha1: "%s"}), (repo {name: "%s"}) MERGE (bin)-[r:STORED_IN]-(repo) RETURN bin.name, type(r), repo.name;`,
+	gb.graphAddCommand(fmt.Sprintf(`MATCH (bin:Binary {sha1: "%s"}), (repo {name: "%s"}) MERGE (repo)-[r:STORES]->(bin);`,
 		binarySha, repoName))
 }
 
 func (gb *GraphBuilder) graphCreateRelationshipDependencyToBuild(buildName, buildNumber, binarySha string) {
-	gb.graphAddCommand(fmt.Sprintf(`MERGE (build:Build {name: "%s", number: "%s"}) return build;`, buildName, buildNumber))
-	gb.graphAddCommand(fmt.Sprintf(`MERGE (bin:Binary {sha1: "%s"}) return bin;`, binarySha))
-	gb.graphAddCommand(fmt.Sprintf(`MATCH (build:Build {name: "%s", number: "%s"}), (bin:Binary {sha1: "%s"}) MERGE (bin)-[r:DEPENDENCY_FOR]->(build) RETURN build.name, type(r), bin.name;`,
+	gb.graphAddCommand(fmt.Sprintf(`MERGE (build:Build {name: "%s", number: "%s"});`, buildName, buildNumber))
+	gb.graphAddCommand(fmt.Sprintf(`MERGE (bin:Binary {sha1: "%s"});`, binarySha))
+	gb.graphAddCommand(fmt.Sprintf(`MATCH (build:Build {name: "%s", number: "%s"}), (bin:Binary {sha1: "%s"}) MERGE (bin)-[r:DEPENDENCY_FOR]->(build);`,
 		buildName, buildNumber, binarySha))
 }
 
 func (gb *GraphBuilder) graphCreateRelationshipBuildToArtifact(buildName, buildNumber, binarySha string) {
-	gb.graphAddCommand(fmt.Sprintf(`MERGE (build:Build {name: "%s", buildNumber: "%s"}) return build;`, buildName, buildNumber))
-	gb.graphAddCommand(fmt.Sprintf(`MERGE (bin:Binary {sha1: "%s"}) return bin;`, binarySha))
-	gb.graphAddCommand(fmt.Sprintf(`MATCH (bin:Binary {sha1: "%s"}), (build:Build {name: "%s", buildNumber: "%s"}) MERGE (build)-[r:PRODUCE]->(bin) RETURN bin.name, type(r), build.name;`,
+	gb.graphAddCommand(fmt.Sprintf(`MERGE (build:Build {name: "%s", buildNumber: "%s"});`, buildName, buildNumber))
+	gb.graphAddCommand(fmt.Sprintf(`MERGE (bin:Binary {sha1: "%s"});`, binarySha))
+	gb.graphAddCommand(fmt.Sprintf(`MATCH (bin:Binary {sha1: "%s"}), (build:Build {name: "%s", buildNumber: "%s"}) MERGE (build)-[r:PRODUCE]->(bin);`,
 		binarySha, buildName, buildNumber))
 }
 
 func (gb *GraphBuilder) graphCreateRelationshipVirtualToLocalOrRemote(name, repo string) {
-	gb.graphAddCommand(fmt.Sprintf(`MATCH (repoV:RepoVIRTUAL {name: "%s"}), (repo {name: "%s"}) MERGE (repoV)-[r:LINKED_TO]-(repo) RETURN repoV.name, type(r), repo.name;`,
+	gb.graphAddCommand(fmt.Sprintf(`MATCH (repoV:RepoVIRTUAL {name: "%s"}), (repo {name: "%s"}) MERGE (repo)-[r:LINKED_TO]->(repoV);`,
 		name, repo))
 }
 
 func (gb *GraphBuilder) graphCreateVirtualRepoNode(name, repoType string, isPriority, isInc, isExc, isXray, isSafe bool) {
-	gb.graphAddCommand(fmt.Sprintf(`MERGE (repo:Repo%s {name: "%s", type: "%s", is_priority: "%s", is_inc: "%s", is_exc: "%s", is_xray: "%s", is_safe: "%s"}) return repo;`,
+	gb.graphAddCommand(fmt.Sprintf(`MERGE (repo:Repo%s {name: "%s", type: "%s", is_priority: "%s", is_inc: "%s", is_exc: "%s", is_xray: "%s", is_safe: "%s"});`,
 		repoType, name, repoType, strconv.FormatBool(isPriority), strconv.FormatBool(isInc), strconv.FormatBool(isExc), strconv.FormatBool(isXray), strconv.FormatBool(isSafe)))
 }
 
 func (gb *GraphBuilder) graphCreateRepoNode(name, repoType string, isPriority, isInc, isExc, isXray bool) {
-	gb.graphAddCommand(fmt.Sprintf(`MERGE (repo:Repo%s {name: "%s", type: "%s", is_priority: "%s", is_inc: "%s", is_exc: "%s", is_xray: "%s"}) return repo;`,
+	gb.graphAddCommand(fmt.Sprintf(`MERGE (repo:Repo%s {name: "%s", type: "%s", is_priority: "%s", is_inc: "%s", is_exc: "%s", is_xray: "%s"});`,
 		repoType, name, repoType, strconv.FormatBool(isPriority), strconv.FormatBool(isInc), strconv.FormatBool(isExc), strconv.FormatBool(isXray)))
+	if strings.EqualFold("remote", repoType) {
+		gb.graphAddCommand(fmt.Sprintf(`MATCH (x:Attacker), (repo:RepoREMOTE {name: "%s"}) MERGE (x)-[r:ATTACKS]->(repo);`, name))
+	}
 }
 
 func createAqlQueryForChecksumRepositories(sha1 string) string {
