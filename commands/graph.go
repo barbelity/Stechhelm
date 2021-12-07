@@ -206,7 +206,7 @@ func (gb *GraphBuilder) handleBuilds(builds []Build) error {
 		// Handle modules.
 		for _, module := range buildInfo.Modules {
 			// Handle dependencies.
-			log.Info("handling module id: " + module.Id)
+			log.Info("Handling module id: " + module.Id)
 			for _, dependency := range module.Dependencies {
 				if dependency.Checksum == nil || dependency.Checksum.Sha1 == "" {
 					continue
