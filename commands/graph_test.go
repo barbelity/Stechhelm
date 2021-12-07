@@ -5,67 +5,6 @@ import (
 	"testing"
 )
 
-func TestCheckVirtualRepoSafety(t *testing.T) {
-	gb := &GraphBuilder{
-		baseUrl:              "http://dummy.url",
-		graphBuilderCommands: []string{},
-		cypherCommands:       make(map[string]bool),
-		repoToVirtualMapping: make(map[string]map[string]bool),
-		allRepos:             make(map[string]*CommonRepositoryDetails),
-	}
-	safeLocalRepo1 := &CommonRepositoryDetails{
-		Key:                "local1",
-		Rclass:             "local",
-		XrayIndex:          true,
-		PackageType:        "go",
-		IncludesPattern:    "abc*",
-		ExcludesPattern:    "efg*",
-		PriorityResolution: true,
-	}
-	safeLocalRepo2 := &CommonRepositoryDetails{
-		Key:                "local2",
-		Rclass:             "local",
-		XrayIndex:          true,
-		PackageType:        "maven",
-		IncludesPattern:    "abc*",
-		ExcludesPattern:    "efg*",
-		PriorityResolution: true,
-	}
-	gb.allRepos[safeLocalRepo1.Key] = safeLocalRepo1
-	gb.allRepos[safeLocalRepo2.Key] = safeLocalRepo2
-
-	// Test case of virtual containing safe repos.
-	virtualRepoConfig := &VirtualRepositoryDetails{
-		CommonRepositoryDetails: CommonRepositoryDetails{
-			Key:                "repo1",
-			Rclass:             "virtual",
-			XrayIndex:          false,
-			PackageType:        "maven",
-			IncludesPattern:    "**/*",
-			ExcludesPattern:    "",
-			PriorityResolution: false,
-		},
-		Repositories: []string{"local1", "local2"},
-	}
-
-	result := gb.checkVirtualRepoSafety(virtualRepoConfig)
-	assert.True(t, result)
-
-	// Test case of virtual containing 2 safe local repos and 1 unsafe remote repo.
-	unsafeRemoteRepo1 := &CommonRepositoryDetails{
-		Key:             "remote1",
-		Rclass:          "remote",
-		XrayIndex:       true,
-		PackageType:     "maven",
-		IncludesPattern: "**/*",
-		ExcludesPattern: "",
-	}
-	gb.allRepos["remote1"] = unsafeRemoteRepo1
-	virtualRepoConfig.Repositories = append(virtualRepoConfig.Repositories, "remote1")
-	result = gb.checkVirtualRepoSafety(virtualRepoConfig)
-	assert.False(t, result)
-}
-
 func TestLinkBinToAllVirtualRepos(t *testing.T) {
 	gb := &GraphBuilder{
 		baseUrl:              "http://dummy.url",

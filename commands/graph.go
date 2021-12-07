@@ -404,6 +404,7 @@ func (gb *GraphBuilder) handleRemoteRepositories() error {
 }
 
 func (gb *GraphBuilder) linkBinToRepos(sha1, localOrRemoteRepo string) {
+	localOrRemoteRepo = strings.TrimSuffix(localOrRemoteRepo, "-cache")
 	repoConfig, ok := gb.allRepos[localOrRemoteRepo]
 	if !ok {
 		// Repo not found.

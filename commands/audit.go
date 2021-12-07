@@ -99,8 +99,8 @@ func printAsTable(repositoryConfigs []CommonRepositoryDetails, localRemoteReposC
 			if err != nil {
 				return err
 			}
-			repoAtRisk := checkVirtualRepoSafety(&virtualRepositoryConfig, localRemoteReposConfig)
-			if repoAtRisk {
+			isRepoSafe := checkVirtualRepoSafety(&virtualRepositoryConfig, localRemoteReposConfig)
+			if !isRepoSafe {
 				riskString = "At risk"
 				riskCount += 1
 			}
