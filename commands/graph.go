@@ -493,9 +493,9 @@ func (gb *GraphBuilder) graphCreateRelationshipDependencyToBuild(buildName, buil
 }
 
 func (gb *GraphBuilder) graphCreateRelationshipBuildToArtifact(buildName, buildNumber, binarySha string) {
-	gb.graphAddCommand(fmt.Sprintf(`MERGE (build:Build {name: "%s", buildNumber: "%s"});`, buildName, buildNumber))
+	gb.graphAddCommand(fmt.Sprintf(`MERGE (build:Build {name: "%s", number: "%s"});`, buildName, buildNumber))
 	gb.graphAddCommand(fmt.Sprintf(`MERGE (bin:Binary {sha1: "%s"});`, binarySha))
-	gb.graphAddCommand(fmt.Sprintf(`MATCH (bin:Binary {sha1: "%s"}), (build:Build {name: "%s", buildNumber: "%s"}) MERGE (build)-[r:PRODUCE]->(bin);`,
+	gb.graphAddCommand(fmt.Sprintf(`MATCH (bin:Binary {sha1: "%s"}), (build:Build {name: "%s", number: "%s"}) MERGE (build)-[r:PRODUCE]->(bin);`,
 		binarySha, buildName, buildNumber))
 }
 
