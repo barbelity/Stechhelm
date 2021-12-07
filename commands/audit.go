@@ -9,6 +9,7 @@ import (
 	"github.com/jfrog/jfrog-cli-core/v2/plugins/components"
 	"github.com/jfrog/jfrog-cli-core/v2/utils/config"
 	"os"
+	"strings"
 )
 
 func GetAuditCommand() components.Command {
@@ -67,7 +68,7 @@ func printAsTable(repositoryConfigs []CommonRepositoryDetails) {
 	t := table.NewWriter()
 	t.SetOutputMirror(os.Stdout)
 	t.AppendHeader(table.Row{"#", "Name", "Type", "Package type", "Include patterns", "Exclude patterns",
-		"Priority Resolution", "Xray Index", "Risk?"})
+		"Priority Resolution", "Xray Index", "Is at Risk?"})
 	t.SetColumnConfigs([]table.ColumnConfig{
 		{Number: 5, Align: text.AlignCenter},
 		{Number: 6, Align: text.AlignCenter},
@@ -77,30 +78,40 @@ func printAsTable(repositoryConfigs []CommonRepositoryDetails) {
 	})
 	riskCount := 0
 	for i, repositoryConfig := range repositoryConfigs {
-		risk := false
+		riskString := "Safe"
 		// Checking if Exclude & Include patterns are empty OR repo is local without priority resolution OR repo is not indexing by xray
-		if ((repositoryConfig.ExcludesPattern == "") && (repositoryConfig.IncludesPattern == "**/*")) ||
-			((repositoryConfig.PriorityResolution == false) && (repositoryConfig.Rclass == "local")) || (repositoryConfig.XrayIndex == false) {
-			risk = true
+		if strings.EqualFold(repositoryConfig.Rclass, "local") {
+			if (repositoryConfig.PriorityResolution == false) || (repositoryConfig.XrayIndex == false) {
+				riskString = "At risk"
+				riskCount += 1
+			}
+		} else if strings.EqualFold(repositoryConfig.Rclass, "remote") {
+			if ((repositoryConfig.ExcludesPattern == "") && (repositoryConfig.IncludesPattern == "**/*")) || (repositoryConfig.XrayIndex == false) {
+				riskString = "At risk"
+				riskCount += 1
+			}
+		} else if strings.EqualFold(repositoryConfig.Rclass, "virtual") {
+			// TODO: Use the same func of graph.go -- checkVirtualRepoSafety()
+			riskString = "At risk"
 			riskCount += 1
 		}
 
 		// Set output params
-		incPatterns := "X"
+		incPatterns := "Not configured"
 		if repositoryConfig.IncludesPattern != "**/*" {
-			incPatterns = "V"
+			incPatterns = "Configured"
 		}
-		excPatterns := "X"
+		excPatterns := "Not configured"
 		if repositoryConfig.ExcludesPattern != "" {
-			excPatterns = "V"
+			excPatterns = "Configured"
 		}
 
 		t.AppendRow(table.Row{i, repositoryConfig.Key, repositoryConfig.Rclass, repositoryConfig.PackageType,
 			incPatterns, excPatterns, repositoryConfig.PriorityResolution, repositoryConfig.XrayIndex,
-			risk})
+			riskString})
 		t.AppendSeparator()
 	}
-	t.AppendFooter(table.Row{"", "", "", "", "", "", "", "Total in risk", riskCount})
+	t.AppendFooter(table.Row{"", "", "", "", "", "", "", "Total at risk", riskCount})
 	t.Render()
 }
 
