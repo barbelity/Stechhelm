@@ -76,27 +76,27 @@ func TestLinkBinToAllVirtualRepos(t *testing.T) {
 	}
 
 	// Link artifact to repo.
-	gb.linkBinToAllVirtualRepos("sha1", "repo1")
+	gb.linkBinToRepos("sha1", "repo1")
 	assert.Equal(t, 1, len(gb.graphBuilderCommands))
 	assert.Equal(t, 1, len(gb.cypherCommands))
 
 	// Link same artifact to same repo - should have no change.
-	gb.linkBinToAllVirtualRepos("sha1", "repo1")
+	gb.linkBinToRepos("sha1", "repo1")
 	assert.Equal(t, 1, len(gb.graphBuilderCommands))
 	assert.Equal(t, 1, len(gb.cypherCommands))
 
 	// Link another artifact to same repo.
-	gb.linkBinToAllVirtualRepos("sha2", "repo1")
+	gb.linkBinToRepos("sha2", "repo1")
 	assert.Equal(t, 2, len(gb.graphBuilderCommands))
 	assert.Equal(t, 2, len(gb.cypherCommands))
 
 	// Link second artifact to another repo.
-	gb.linkBinToAllVirtualRepos("sha2", "repo2")
+	gb.linkBinToRepos("sha2", "repo2")
 	assert.Equal(t, 3, len(gb.graphBuilderCommands))
 	assert.Equal(t, 3, len(gb.cypherCommands))
 
 	// Link second artifact to first repo.
-	gb.linkBinToAllVirtualRepos("sha2", "repo2")
+	gb.linkBinToRepos("sha2", "repo2")
 	assert.Equal(t, 3, len(gb.graphBuilderCommands))
 	assert.Equal(t, 3, len(gb.cypherCommands))
 }

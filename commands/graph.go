@@ -216,7 +216,7 @@ func (gb *GraphBuilder) handleBuilds(builds []Build) error {
 					log.Info(fmt.Sprintf("an error has ocurred when handling build: %s dependency: %s", buildName, dependency.Sha1), err)
 				}
 			}
-
+			// Handle artifacts.
 			for _, artifact := range module.Artifacts {
 				if artifact.Checksum == nil || artifact.Checksum.Sha1 == "" {
 					continue
@@ -245,7 +245,7 @@ func (gb *GraphBuilder) handleArtifact(artifact *buildinfo.Artifact, buildInfo *
 	visitedChecksums[artifact.Sha1] = true
 	for _, repoResult := range repoResults {
 		repoName := repoResult.Repo
-		gb.linkBinToAllVirtualRepos(artifact.Sha1, repoName)
+		gb.linkBinToRepos(artifact.Sha1, repoName)
 	}
 	return nil
 }
@@ -264,7 +264,7 @@ func (gb *GraphBuilder) handleDependency(dependency *buildinfo.Dependency, build
 	visitedChecksums[dependency.Sha1] = true
 	for _, repoResult := range repoResults {
 		repoName := repoResult.Repo
-		gb.linkBinToAllVirtualRepos(dependency.Sha1, repoName)
+		gb.linkBinToRepos(dependency.Sha1, repoName)
 	}
 	return nil
 }
@@ -341,7 +341,7 @@ func (gb *GraphBuilder) handleVirtualRepositories() error {
 		if err != nil {
 			return err
 		}
-		isSafe := gb.checkVirtualRepoSafety(&repositoryConfig)
+		isSafe := checkVirtualRepoSafety(&repositoryConfig, gb.allRepos)
 		gb.graphCreateVirtualRepoNode(repositoryConfig.Key, "VIRTUAL", repositoryConfig.PriorityResolution,
 			repositoryConfig.IncludesPattern != "**/*", repositoryConfig.ExcludesPattern != "", repositoryConfig.XrayIndex, isSafe)
 
@@ -361,30 +361,6 @@ func (gb *GraphBuilder) handleVirtualRepositories() error {
 		}
 	}
 	return nil
-}
-
-func (gb *GraphBuilder) checkVirtualRepoSafety(repositoryConfig *VirtualRepositoryDetails) bool {
-	repoIsSafe := true
-	localWithPriorityExists := false
-	for _, repo := range repositoryConfig.Repositories {
-		if config, ok := gb.allRepos[repo]; ok {
-			if !config.XrayIndex {
-				repoIsSafe = false
-				break
-			}
-			if strings.EqualFold(config.Rclass, "local") {
-				if config.PriorityResolution {
-					localWithPriorityExists = true
-				}
-			} else if strings.EqualFold(config.Rclass, "remote") {
-				if config.IncludesPattern == "**/*" && config.ExcludesPattern == "" {
-					repoIsSafe = false
-					break
-				}
-			}
-		}
-	}
-	return repoIsSafe && localWithPriorityExists
 }
 
 func (gb *GraphBuilder) handleLocalRepositories() error {
@@ -427,7 +403,18 @@ func (gb *GraphBuilder) handleRemoteRepositories() error {
 	return nil
 }
 
-func (gb *GraphBuilder) linkBinToAllVirtualRepos(sha1, localOrRemoteRepo string) {
+func (gb *GraphBuilder) linkBinToRepos(sha1, localOrRemoteRepo string) {
+	repoConfig, ok := gb.allRepos[localOrRemoteRepo]
+	if !ok {
+		// Repo not found.
+		return
+	}
+	if strings.EqualFold(repoConfig.Rclass, "local") {
+		// Link to local.
+		gb.graphCreateRelationshipBinaryToRepo(sha1, localOrRemoteRepo)
+		return
+	}
+	// Link to virtual.
 	virtualRepos, exists := gb.repoToVirtualMapping[localOrRemoteRepo]
 	if !exists {
 		gb.graphCreateRelationshipBinaryToRepo(sha1, localOrRemoteRepo)

@@ -8,6 +8,7 @@ import (
 	"github.com/jfrog/jfrog-cli-core/v2/artifactory/utils"
 	"github.com/jfrog/jfrog-cli-core/v2/plugins/components"
 	"github.com/jfrog/jfrog-cli-core/v2/utils/config"
+	"github.com/jfrog/jfrog-client-go/artifactory"
 	"os"
 	"strings"
 )
@@ -50,6 +51,7 @@ func doAudit(artifactoryDetails *config.ServerDetails) error {
 	}
 
 	// Get all repository configurations.
+	localRemoteReposConfig := map[string]*CommonRepositoryDetails{}
 	var repositoryConfigs []CommonRepositoryDetails
 	for _, repositoryDetail := range *repositoryDetails {
 		repositoryConfig := CommonRepositoryDetails{}
@@ -58,13 +60,14 @@ func doAudit(artifactoryDetails *config.ServerDetails) error {
 			return err
 		}
 		repositoryConfigs = append(repositoryConfigs, repositoryConfig)
+		localRemoteReposConfig[repositoryConfig.Key] = &repositoryConfig
 	}
 
-	printAsTable(repositoryConfigs)
+	printAsTable(repositoryConfigs, localRemoteReposConfig, serviceManager)
 	return nil
 }
 
-func printAsTable(repositoryConfigs []CommonRepositoryDetails) {
+func printAsTable(repositoryConfigs []CommonRepositoryDetails, localRemoteReposConfig map[string]*CommonRepositoryDetails, serviceManager artifactory.ArtifactoryServicesManager) error {
 	t := table.NewWriter()
 	t.SetOutputMirror(os.Stdout)
 	t.AppendHeader(table.Row{"#", "Name", "Type", "Package type", "Include patterns", "Exclude patterns",
@@ -91,9 +94,16 @@ func printAsTable(repositoryConfigs []CommonRepositoryDetails) {
 				riskCount += 1
 			}
 		} else if strings.EqualFold(repositoryConfig.Rclass, "virtual") {
-			// TODO: Use the same func of graph.go -- checkVirtualRepoSafety()
-			riskString = "At risk"
-			riskCount += 1
+			virtualRepositoryConfig := VirtualRepositoryDetails{}
+			err := serviceManager.GetRepository(repositoryConfig.Key, &virtualRepositoryConfig)
+			if err != nil {
+				return err
+			}
+			repoAtRisk := checkVirtualRepoSafety(&virtualRepositoryConfig, localRemoteReposConfig)
+			if repoAtRisk {
+				riskString = "At risk"
+				riskCount += 1
+			}
 		}
 
 		// Set output params
@@ -106,13 +116,18 @@ func printAsTable(repositoryConfigs []CommonRepositoryDetails) {
 			excPatterns = "Configured"
 		}
 
-		t.AppendRow(table.Row{i, repositoryConfig.Key, repositoryConfig.Rclass, repositoryConfig.PackageType,
-			incPatterns, excPatterns, repositoryConfig.PriorityResolution, repositoryConfig.XrayIndex,
-			riskString})
+		if strings.EqualFold(repositoryConfig.Rclass, "virtual") {
+			t.AppendRow(table.Row{i, repositoryConfig.Key, repositoryConfig.Rclass, repositoryConfig.PackageType,
+				"-", "-", "-", "-", riskString})
+		} else {
+			t.AppendRow(table.Row{i, repositoryConfig.Key, repositoryConfig.Rclass, repositoryConfig.PackageType,
+				incPatterns, excPatterns, repositoryConfig.PriorityResolution, repositoryConfig.XrayIndex, riskString})
+		}
 		t.AppendSeparator()
 	}
 	t.AppendFooter(table.Row{"", "", "", "", "", "", "", "Total at risk", riskCount})
 	t.Render()
+	return nil
 }
 
 func getAuditArguments() []components.Argument {
