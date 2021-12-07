@@ -64,7 +64,7 @@ func graphCmd(c *components.Context) error {
 	serviceDetails := graphBuilder.serviceManager.GetConfig().GetServiceDetails()
 	graphBuilder.clientDetails = serviceDetails.CreateHttpClientDetails()
 	graphBuilder.baseUrl = serviceDetails.GetUrl()
-	graphBuilder.graphAddCommand("MERGE (x:Attacker);")
+	graphBuilder.graphAddCommand("MERGE (x:Attacker {name:\"attacker\"});")
 	return graphBuilder.makeGraph()
 }
 
@@ -513,7 +513,7 @@ func (gb *GraphBuilder) graphCreateRepoNode(name, repoType string, isPriority, i
 	gb.graphAddCommand(fmt.Sprintf(`MERGE (repo:Repo%s {name: "%s", type: "%s", is_priority: "%s", is_inc: "%s", is_exc: "%s", is_xray: "%s"});`,
 		repoType, name, repoType, strconv.FormatBool(isPriority), strconv.FormatBool(isInc), strconv.FormatBool(isExc), strconv.FormatBool(isXray)))
 	if strings.EqualFold("remote", repoType) {
-		gb.graphAddCommand(fmt.Sprintf(`MATCH (x:Attacker), (repo:RepoREMOTE {name: "%s"}) MERGE (x)-[r:ATTACKS]->(repo);`, name))
+		gb.graphAddCommand(fmt.Sprintf(`MATCH (x:Attacker {name:"attacker"}), (repo:RepoREMOTE {name: "%s"}) MERGE (x)-[r:ATTACKS]->(repo);`, name))
 	}
 }
 
