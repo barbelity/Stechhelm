@@ -1,5 +1,7 @@
 # stechhelm
 
+[![Scanned by Frogbot](https://raw.github.com/jfrog/frogbot/master/images/frogbot-badge.svg)](https://github.com/jfrog/frogbot#readme)
+
 ## About this plugin
 This plugin was created to analyse and visualise potential threats and risks in JFrog platforms.
 It is done by understanding the relations between JFrog components, and building a corresponding graph in neo4j.
