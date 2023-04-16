@@ -51,6 +51,7 @@ Here are some useful queries to use in neo4j, after creating the graph.
     ```
         MATCH (n1)-[r]->(n2) RETURN r, n1, n2
     ```
+    
 * Find the shortest path - from an attacker to each vulnerable build:
     ```
         MATCH p = shortestPath((x:RepoVIRTUAL)-[r2:STORES|PRODUCE|DEPENDENCY_FOR*1..10]->(b:Build)),(n)-[r3:LINKED_TO|ATTACKS*1..4]->(x)
