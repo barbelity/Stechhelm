@@ -9,4 +9,5 @@ require (
 	github.com/neo4j/neo4j-go-driver/v4 v4.4.0 // indirect
 	github.com/stretchr/testify v1.7.0
 	golang.org/x/crypto v0.1.0 // indirect
+	golang.org/x/net v0.1.1-0.20221104162952-702349b0e862 // indirect
 )
